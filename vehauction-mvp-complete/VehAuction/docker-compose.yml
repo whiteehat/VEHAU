@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: vehauction_postgres
+    environment:
+      POSTGRES_USER: vehauction
+      POSTGRES_PASSWORD: vehauction123
+      POSTGRES_DB: vehauction_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vehauction']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vehauction_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vehauction_backend
+    environment:
+      DATABASE_URL: postgresql://vehauction:vehauction123@postgres:5432/vehauction_db
+      JWT_SECRET: your_super_secret_jwt_key_change_this_in_production
+      PAYSTACK_SECRET: sk_test_your_paystack_key_here
+      CLOUDINARY_NAME: your_cloudinary_name
+      CLOUDINARY_API_KEY: your_api_key
+      CLOUDINARY_API_SECRET: your_api_secret
+      NODE_ENV: development
+      API_PORT: 3001
+      FRONTEND_URL: http://localhost:3000
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/node_modules:/app/node_modules
+    command: npm run start:dev
+    networks:
+      - vehauction_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vehauction_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_APP_NAME: VehAuction
+    ports:
+      - '3000:3000'
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/node_modules:/app/node_modules
+    networks:
+      - vehauction_network
+
+volumes:
+  postgres_data:
+
+networks:
+  vehauction_network:
+    driver: bridge

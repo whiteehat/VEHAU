@@ -1,0 +1,610 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SUPER_ADMIN
+  BUYER
+  SELLER
+  VENDOR
+  INSPECTOR
+}
+
+enum UserStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum VehicleCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+}
+
+enum VehicleStatus {
+  DRAFT
+  PENDING_INSPECTION
+  INSPECTION_APPROVED
+  READY_FOR_AUCTION
+  AUCTION_ACTIVE
+  AUCTION_ENDED
+  SOLD
+  UNSOLD
+}
+
+enum InspectionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  APPROVED
+  REJECTED
+}
+
+enum AuctionStatus {
+  DRAFT
+  SCHEDULED
+  LIVE
+  ENDED
+  CANCELLED
+}
+
+enum BidStatus {
+  ACTIVE
+  OUTBID
+  WINNER
+  FORFEIT
+}
+
+enum PartCondition {
+  NEW
+  USED
+  REFURBISHED
+}
+
+enum PartCategory {
+  ENGINE
+  SUSPENSION
+  BRAKE
+  ELECTRICAL
+  BODY
+  INTERIOR
+  ACCESSORIES
+}
+
+enum OrderStatus {
+  PENDING
+  ACCEPTED
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+}
+
+enum TransactionType {
+  WALLET_FUND
+  WALLET_WITHDRAW
+  AUCTION_COMMISSION
+  PARTS_PURCHASE
+  VENDOR_PAYOUT
+  REFUND
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+// ============ USER MANAGEMENT ============
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  password          String
+  firstName         String
+  lastName          String
+  phone             String?
+  profilePicture    String?
+  roles             Role[]    @default([BUYER])
+  status            UserStatus @default(PENDING)
+  emailVerified     Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  wallet            Wallet?
+  walletTransactions WalletTransaction[]
+  vehicles          Vehicle[]
+  inspectionReports InspectionReport[]
+  bids              Bid[]
+  vendorProfile     VendorProfile?
+  parts             Part[]
+  cartItems         CartItem[]
+  orders            Order[]
+  orderItems        OrderItem[]
+  reviews           Review[]
+  auditLogs         AdminAuditLog[]
+}
+
+model Role {
+  id    String  @id @default(cuid())
+  name  String  @unique
+  createdAt DateTime @default(now())
+}
+
+// ============ WALLET & PAYMENT ============
+
+model Wallet {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance           BigInt    @default(0) // in Naira (smallest unit)
+  lockedBalance     BigInt    @default(0) // Amount in escrow for auction bids
+  totalFunded       BigInt    @default(0)
+  totalWithdrawn    BigInt    @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              TransactionType
+  amount            BigInt
+  balanceBefore     BigInt
+  balanceAfter      BigInt
+  description       String?
+  reference         String?   // For Paystack transaction reference
+  relatedAuctionId  String?   // If auction-related
+  relatedOrderId    String?   // If order-related
+  status            PaymentStatus @default(PENDING)
+  metadata          String?   // JSON string for additional data
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+// ============ VEHICLE AUCTION ============
+
+model Vehicle {
+  id                String    @id @default(cuid())
+  sellerId          String
+  seller            User      @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  
+  // Vehicle Details
+  make              String
+  model             String
+  year              Int
+  vin               String?   @unique
+  mileage           Int
+  color             String?
+  fuelType          String?
+  transmission      String?   // Manual, Automatic, CVT
+  engineCC          Int?
+  condition         VehicleCondition
+  location          String
+  
+  // Status & Inspection
+  status            VehicleStatus @default(DRAFT)
+  inspectionReport  InspectionReport?
+  inspectionFee     BigInt    @default(0)
+  inspectionFeePaid Boolean   @default(false)
+  
+  // Auction
+  auction           Auction?
+  
+  // Media
+  images            String[]  @default([]) // JSON array of image URLs
+  videoUrl          String?
+  
+  // Metadata
+  description       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([make])
+  @@index([model])
+}
+
+model InspectionReport {
+  id                String    @id @default(cuid())
+  vehicleId         String    @unique
+  vehicle           Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  inspectorId       String
+  inspector         User      @relation(fields: [inspectorId], references: [id])
+  
+  // Inspection Details
+  mechanicalGrade   String? // A, B, C, D
+  engineStatus      String?
+  transmissionStatus String?
+  brakesStatus      String?
+  suspensionStatus  String?
+  accidentHistory   Boolean   @default(false)
+  accidentNotes     String?
+  documentationVerified Boolean @default(false)
+  theftClearance    Boolean   @default(false)
+  
+  // Report
+  overallNotes      String?
+  photos            String[]  @default([])
+  videoUrl          String?
+  
+  // Status
+  status            InspectionStatus @default(PENDING)
+  approvedAt        DateTime?
+  approvedBy        String?
+  rejectionReason   String?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([vehicleId])
+  @@index([inspectorId])
+}
+
+model Auction {
+  id                String    @id @default(cuid())
+  vehicleId         String    @unique
+  vehicle           Vehicle   @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  
+  // Auction Details
+  title             String
+  description       String?
+  startPrice        BigInt
+  reservePrice      BigInt    // Hidden from bidders
+  currentHighestBid BigInt    @default(0)
+  minimumIncrement  BigInt
+  
+  // Timing
+  startTime         DateTime
+  endTime           DateTime
+  status            AuctionStatus @default(SCHEDULED)
+  
+  // Winner
+  winnerId          String?
+  winningBid        BigInt?
+  paymentDeadline   DateTime?
+  paymentCompleted  Boolean   @default(false)
+  
+  // Bids
+  bids              Bid[]
+  
+  // Metadata
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([vehicleId])
+  @@index([status])
+  @@index([startTime])
+  @@index([endTime])
+}
+
+model Bid {
+  id                String    @id @default(cuid())
+  auctionId         String
+  auction           Auction   @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  bidderId          String
+  bidder            User      @relation(fields: [bidderId], references: [id], onDelete: Cascade)
+  
+  // Bid Details
+  amount            BigInt
+  status            BidStatus @default(ACTIVE)
+  walletLocked      BigInt    @default(0) // Amount locked in wallet escrow
+  
+  // Validation
+  isValid           Boolean   @default(true)
+  
+  createdAt         DateTime  @default(now())
+
+  @@index([auctionId])
+  @@index([bidderId])
+  @@index([createdAt])
+  @@unique([auctionId, bidderId]) // Only one active bid per bidder per auction
+}
+
+// ============ AUTO PARTS MARKETPLACE ============
+
+model VendorProfile {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Business Info
+  businessName      String
+  businessAddress   String
+  businessPhone     String?
+  location          String
+  registrationNumber String?
+  
+  // Status
+  status            UserStatus @default(PENDING)
+  approvedAt        DateTime?
+  
+  // Parts
+  parts             Part[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model PartCategory {
+  id                String    @id @default(cuid())
+  name              String    @unique
+  description       String?
+  createdAt         DateTime  @default(now())
+}
+
+model Part {
+  id                String    @id @default(cuid())
+  vendorId          String
+  vendor            User      @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  
+  // Part Details
+  name              String
+  category          PartCategory @relation(fields: [categoryId], references: [id])
+  categoryId        String
+  condition         PartCondition
+  brand             String
+  description       String?
+  
+  // Inventory
+  price             BigInt
+  quantity          Int
+  
+  // Compatibility
+  compatibilities   PartCompatibility[]
+  
+  // Delivery
+  deliveryOptions   String[]  @default(["PICKUP", "DELIVERY"])
+  vendorLocation    String
+  
+  // Media
+  photos            String[]  @default([])
+  
+  // Status
+  isActive          Boolean   @default(true)
+  
+  // Tracking
+  cartItems         CartItem[]
+  orderItems        OrderItem[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([vendorId])
+  @@index([categoryId])
+  @@index([isActive])
+}
+
+model PartCompatibility {
+  id                String    @id @default(cuid())
+  partId            String
+  part              Part      @relation(fields: [partId], references: [id], onDelete: Cascade)
+  
+  // Vehicle Compatibility
+  vehicleMake       String    // e.g., "Toyota"
+  vehicleModel      String    // e.g., "Camry"
+  yearStart         Int       // e.g., 2015
+  yearEnd           Int       // e.g., 2020
+  
+  createdAt         DateTime  @default(now())
+
+  @@index([partId])
+  @@index([vehicleMake])
+  @@index([vehicleModel])
+}
+
+// ============ CART & ORDERS ============
+
+model Cart {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  
+  items             CartItem[]
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model CartItem {
+  id                String    @id @default(cuid())
+  cartId            String
+  cart              Cart      @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  
+  partId            String
+  part              Part      @relation(fields: [partId], references: [id], onDelete: Cascade)
+  
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  quantity          Int
+  priceAtAddTime    BigInt
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([partId])
+}
+
+model Order {
+  id                String    @id @default(cuid())
+  orderNumber       String    @unique
+  buyerId           String
+  buyer             User      @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  
+  // Order Details
+  items             OrderItem[]
+  totalAmount       BigInt
+  status            OrderStatus @default(PENDING)
+  
+  // Payment
+  paymentReference  String?
+  paymentStatus     PaymentStatus @default(PENDING)
+  paidAt            DateTime?
+  
+  // Delivery
+  deliveryAddress   String?
+  deliveryPhone     String?
+  trackingNumber    String?
+  deliveryStatus    String?
+  
+  // Timeline
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deliveredAt       DateTime?
+
+  @@index([buyerId])
+  @@index([status])
+}
+
+model OrderItem {
+  id                String    @id @default(cuid())
+  orderId           String
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  partId            String
+  part              Part      @relation(fields: [partId], references: [id])
+  
+  vendorId          String
+  vendor            User      @relation(fields: [vendorId], references: [id])
+  
+  quantity          Int
+  pricePerUnit      BigInt
+  totalPrice        BigInt
+  
+  // Vendor Status Update
+  vendorStatus      OrderStatus @default(PENDING)
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([orderId])
+  @@index([partId])
+  @@index([vendorId])
+}
+
+model DeliveryTracking {
+  id                String    @id @default(cuid())
+  orderId           String    @unique
+  
+  status            String    // PENDING, IN_TRANSIT, DELIVERED, FAILED
+  currentLocation   String?
+  estimatedDelivery DateTime?
+  deliveredAt       DateTime?
+  
+  trackingNotes     String[]  @default([])
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+model ReturnRequest {
+  id                String    @id @default(cuid())
+  orderId           String
+  orderItemId       String
+  buyerId           String
+  
+  reason            String
+  description       String?
+  photos            String[]  @default([])
+  
+  status            ReturnStatus @default(PENDING)
+  approvedAt        DateTime?
+  refundAmount      BigInt?
+  refundedAt        DateTime?
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([buyerId])
+  @@index([status])
+}
+
+// ============ REVIEWS & RATINGS ============
+
+model Review {
+  id                String    @id @default(cuid())
+  reviewerId        String
+  reviewer          User      @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  
+  // Review Subject
+  partId            String?
+  orderId           String?
+  
+  // Review Content
+  rating            Int       // 1-5 stars
+  title             String?
+  comment           String?
+  photos            String[]  @default([])
+  
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([reviewerId])
+}
+
+// ============ ADMIN & AUDIT ============
+
+model AdminAuditLog {
+  id                String    @id @default(cuid())
+  adminId           String
+  admin             User      @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  
+  action            String    // APPROVE_USER, REJECT_VEHICLE, etc.
+  entityType        String    // USER, VEHICLE, AUCTION, etc.
+  entityId          String
+  
+  previousData      String?   // JSON string
+  newData           String?   // JSON string
+  reason            String?
+  ipAddress         String?
+  userAgent         String?
+  
+  createdAt         DateTime  @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model Inventory {
+  id                String    @id @default(cuid())
+  partId            String    @unique
+  
+  totalQty          Int
+  reservedQty       Int       @default(0)
+  availableQty      Int
+  
+  lastRestocked     DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
